@@ -99,18 +99,19 @@ async function tmdbData(id, type) {
     if (!r.ok) return null;
     const d = JSON.parse(await r.text());
     return { title: d.title || d.name || '', year: String(d.release_date || d.first_air_date || '').slice(0,4) };
-  } catch (_) { return null; }
+  } catch (e) {
+    throw new Error('[Cinubo] Fallo consultando TMDB: ' + (e && e.message ? e.message : e));
+  }
 }
 async function findFicha(tmdbId, type) {
   const data = await tmdbData(tmdbId, type);
   if (!data || !data.title) {
-    console.log('[Cinubo] No se han podido obtener los metadatos de TMDB.');
-    return null;
+    throw new Error('[Cinubo] TMDB no ha devuelto el título para el ID ' + tmdbId + '.');
   }
   try {
     // Endpoint observado en la búsqueda dinámica de Cinubo (POST JSON).
     const r = await request(BASE + '/api/search/posts', 'POST', { query: data.title, page: 1 });
-    if (!r.ok) return null;
+    if (!r.ok) throw new Error('La búsqueda de Cinubo respondió HTTP ' + r.status + '.');
     const payload = JSON.parse(await r.text());
     const rows = [];
     const collect = (value, depth = 0) => {
@@ -138,7 +139,7 @@ async function findFicha(tmdbId, type) {
       .map(x => ({ item: x, rank: score(x.title, data.title) }))
       .sort((a, b) => b.rank - a.rank)
       .find(x => x.rank >= 0.72)?.item;
-    if (!match) return null;
+    if (!match) throw new Error('La API de Cinubo no encontró coincidencia para «' + data.title + '» (TMDB ' + tmdbId + ').');
     const route = type === 'tv' ? '/s/' : '/p/';
     const rawPath = match.url || match.path || match.permalink || '';
     const fichaUrl = rawPath
@@ -152,7 +153,7 @@ async function findFicha(tmdbId, type) {
     };
   } catch (e) {
     console.log('[Cinubo] Error en búsqueda API: ' + (e && e.message ? e.message : e));
-    return null;
+    throw new Error('[Cinubo] Error procesando la búsqueda: ' + (e && e.message ? e.message : e));
   }
 }
 function parsePlayback(htmlPage, heading) {
@@ -191,18 +192,21 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     let target = ficha.url;
     if (mediaType === 'tv') {
       // El HTML observado utiliza rutas /s/{slug}/{temporada}x{episodio}.
-      if (!season || !episode) return [];
+      if (!season || !episode) throw new Error('[Cinubo] Faltan temporada o episodio para la serie.');
       target = `${ficha.url.replace(/\/+$/, '')}/${parseInt(season,10)}x${parseInt(episode,10)}`;
     }
     const page = await html(target);
-    if (!page) return [];
+    if (!page) throw new Error('[Cinubo] No se pudo descargar la ficha: ' + target);
     const heading = mediaType === 'tv'
       ? `${ficha.data.title} - T${season} E${episode}`
       : `${ficha.data.title}${ficha.data.year ? ` (${ficha.data.year})` : ''}`;
-    return parsePlayback(page, heading);
+    const streams = parsePlayback(page, heading);
+    if (!streams.length) throw new Error('[Cinubo] Se abrió la ficha, pero no se encontraron enlaces en castellano en data-link-playback.');
+    return streams;
   } catch (e) {
-    console.log(`[Cinubo] ${e && e.message ? e.message : e}`);
-    return [];
+    const message = e && e.message ? e.message : String(e);
+    console.log(`[Cinubo] ${message}`);
+    throw new Error(message);
   }
 }
 module.exports = { getStreams };
