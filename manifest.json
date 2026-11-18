@@ -1,12 +1,12 @@
 {
   "name": "Cinubo España",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "scrapers": [
     {
       "id": "cinubo",
       "name": "Cinubo",
       "description": "Películas y series desde Cinubo",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "author": "Comunidad",
       "supportedTypes": [
         "movie",
