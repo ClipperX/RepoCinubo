@@ -39,7 +39,7 @@ async function request(url, method = 'GET', body = null) {
     ...(body ? { 'Content-Type': 'application/json', 'Origin': BASE, 'Referer': BASE + '/' } : {})
   };
   if (typeof __native_fetch === 'function') {
-    const raw = await __native_fetch(url, method, JSON.stringify(headers), 'none', body ? JSON.stringify(body) : '', true);
+    const raw = await __native_fetch(url, method, JSON.stringify(headers), body ? 'text' : 'none', body ? JSON.stringify(body) : '', true);
     const d = typeof raw === 'string' ? JSON.parse(raw) : raw;
     return { ok: !!d.ok, status: d.status, url: d.url || url, text: async () => d.body || '' };
   }
@@ -112,15 +112,27 @@ async function findFicha(tmdbId, type) {
     const r = await request(BASE + '/api/search/posts', 'POST', { query: data.title, page: 1 });
     if (!r.ok) return null;
     const payload = JSON.parse(await r.text());
-    const rows = Array.isArray(payload) ? payload
-      : Array.isArray(payload.data) ? payload.data
-      : Array.isArray(payload.posts) ? payload.posts
-      : Array.isArray(payload.results) ? payload.results : [];
-    const wantedType = type === 'tv' ? 'series' : 'movie';
-    const candidates = rows.filter(x => x && x.slug && (
-      String(x.type || '').toLowerCase() === (type === 'tv' ? 'tv' : 'movie') ||
-      String(x.type || '').toLowerCase() === wantedType
-    ));
+    const rows = [];
+    const collect = (value, depth = 0) => {
+      if (!value || depth > 6) return;
+      if (Array.isArray(value)) {
+        for (const item of value) collect(item, depth + 1);
+        return;
+      }
+      if (typeof value !== 'object') return;
+      if (value.slug && (value.title || value.name)) rows.push(value);
+      for (const [key, child] of Object.entries(value)) {
+        if (key !== 'poster' && key !== 'cover') collect(child, depth + 1);
+      }
+    };
+    collect(payload);
+    const wantedTypes = type === 'tv'
+      ? new Set(['tv', 'serie', 'series', 'show', 'tv_show'])
+      : new Set(['movie', 'pelicula', 'película', 'film']);
+    const candidates = rows.filter(x => {
+      const kind = String(x.type || x.post_type || '').toLowerCase();
+      return wantedTypes.has(kind);
+    });
     const exact = candidates.find(x => String(x.tmdb_id || '') === String(tmdbId));
     const match = exact || candidates
       .map(x => ({ item: x, rank: score(x.title, data.title) }))
@@ -128,10 +140,14 @@ async function findFicha(tmdbId, type) {
       .find(x => x.rank >= 0.72)?.item;
     if (!match) return null;
     const route = type === 'tv' ? '/s/' : '/p/';
+    const rawPath = match.url || match.path || match.permalink || '';
+    const fichaUrl = rawPath
+      ? (String(rawPath).startsWith('http') ? String(rawPath) : BASE + (String(rawPath).startsWith('/') ? '' : '/') + String(rawPath))
+      : BASE + route + encodeURIComponent(String(match.slug));
     return {
       id: String(match.id || match.slug),
-      url: BASE + route + encodeURIComponent(String(match.slug)),
-      title: match.title || data.title,
+      url: fichaUrl,
+      title: match.title || match.name || data.title,
       data
     };
   } catch (e) {
