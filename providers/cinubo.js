@@ -31,18 +31,19 @@ function norm(s) {
   return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
-async function request(url) {
-  const options = { method: 'GET', headers: {
+async function request(url, method = 'GET', body = null) {
+  const headers = {
     'User-Agent': UA,
     'Accept': 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'es-ES,es;q=0.9'
-  }};
+    'Accept-Language': 'es-ES,es;q=0.9',
+    ...(body ? { 'Content-Type': 'application/json', 'Origin': BASE, 'Referer': BASE + '/' } : {})
+  };
   if (typeof __native_fetch === 'function') {
-    const raw = await __native_fetch(url, 'GET', JSON.stringify(options.headers), 'none', '', true);
-    const d = JSON.parse(raw);
+    const raw = await __native_fetch(url, method, JSON.stringify(headers), 'none', body ? JSON.stringify(body) : '', true);
+    const d = typeof raw === 'string' ? JSON.parse(raw) : raw;
     return { ok: !!d.ok, status: d.status, url: d.url || url, text: async () => d.body || '' };
   }
-  const r = await fetch(url, options);
+  const r = await fetch(url, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
   return { ok: r.ok, status: r.status, url: r.url || url, text: () => r.text() };
 }
 async function html(url) {
@@ -103,15 +104,40 @@ async function tmdbData(id, type) {
 async function findFicha(tmdbId, type) {
   const data = await tmdbData(tmdbId, type);
   if (!data || !data.title) {
-    console.log('[Cinubo] Para buscar por TMDB, configura TMDB_KEY con tu clave propia.');
+    console.log('[Cinubo] No se han podido obtener los metadatos de TMDB.');
     return null;
   }
-  const section = type === 'tv' ? '/series' : '/peliculas';
-  const page = await html(BASE + section);
-  const items = catalogItems(page, type).sort((a,b) => score(b.title, data.title) - score(a.title, data.title));
-  const match = items.find(x => score(x.title, data.title) >= 0.72);
-  if (!match) return null;
-  return { ...match, data };
+  try {
+    // Endpoint observado en la búsqueda dinámica de Cinubo (POST JSON).
+    const r = await request(BASE + '/api/search/posts', 'POST', { query: data.title, page: 1 });
+    if (!r.ok) return null;
+    const payload = JSON.parse(await r.text());
+    const rows = Array.isArray(payload) ? payload
+      : Array.isArray(payload.data) ? payload.data
+      : Array.isArray(payload.posts) ? payload.posts
+      : Array.isArray(payload.results) ? payload.results : [];
+    const wantedType = type === 'tv' ? 'series' : 'movie';
+    const candidates = rows.filter(x => x && x.slug && (
+      String(x.type || '').toLowerCase() === (type === 'tv' ? 'tv' : 'movie') ||
+      String(x.type || '').toLowerCase() === wantedType
+    ));
+    const exact = candidates.find(x => String(x.tmdb_id || '') === String(tmdbId));
+    const match = exact || candidates
+      .map(x => ({ item: x, rank: score(x.title, data.title) }))
+      .sort((a, b) => b.rank - a.rank)
+      .find(x => x.rank >= 0.72)?.item;
+    if (!match) return null;
+    const route = type === 'tv' ? '/s/' : '/p/';
+    return {
+      id: String(match.id || match.slug),
+      url: BASE + route + encodeURIComponent(String(match.slug)),
+      title: match.title || data.title,
+      data
+    };
+  } catch (e) {
+    console.log('[Cinubo] Error en búsqueda API: ' + (e && e.message ? e.message : e));
+    return null;
+  }
 }
 function parsePlayback(htmlPage, heading) {
   const re = /data-link-playback\s*=\s*["']([^"']+)["']/gi;
