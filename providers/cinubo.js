@@ -8,7 +8,7 @@
  */
 const BASE = 'https://cinubo.com';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
-const TMDB_KEY = ''; // Opcional: introducir aquí una API key propia de TMDB.
+const TMDB_KEY = '439c478a771f35c05022f9feabcca01c'; // Opcional: introducir aquí una API key propia de TMDB.
 
 function abs(url) {
   if (!url) return '';
